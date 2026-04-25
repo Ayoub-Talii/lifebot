@@ -1,0 +1,6 @@
+.env
+data.json
+bot.log
+__pycache__/
+*.pyc
+gangs.json
