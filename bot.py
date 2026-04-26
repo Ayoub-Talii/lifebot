@@ -5867,13 +5867,25 @@ async def _rps_resolve(interaction: discord.Interaction, challenge_id: str):
         color  = discord.Color.blurple()
 
     save_data()
+
+    guild = interaction.guild or (bot.get_channel(ch.get("channel_id")) and bot.get_channel(ch["channel_id"]).guild)
+    m1 = guild.get_member(ch["challenger"]) if guild else None
+    m2 = guild.get_member(ch["challenged"]) if guild else None
+    n1 = m1.display_name if m1 else f"<@{ch['challenger']}>"
+    n2 = m2.display_name if m2 else f"<@{ch['challenged']}>"
+
+    if RPS_BEATS[c1] == c2:
+        result = f"🏆 **{n1}** wins **+${bet:,}**!"
+    elif RPS_BEATS[c2] == c1:
+        result = f"🏆 **{n2}** wins **+${bet:,}**!"
+
     del rps_challenges[challenge_id]
 
     embed = discord.Embed(title="⚔️ RPS — REVEAL! 🔥", color=color)
-    embed.add_field(name=f"<@{ch['challenger']}>", value=f"**{RPS_EMOJI[c1]} {c1.capitalize()}**", inline=True)
-    embed.add_field(name="⚔️",                    value="VS",                                       inline=True)
-    embed.add_field(name=f"<@{ch['challenged']}>", value=f"**{RPS_EMOJI[c2]} {c2.capitalize()}**", inline=True)
-    embed.add_field(name="🏆 Result",              value=result,                                     inline=False)
+    embed.add_field(name=n1,          value=f"**{RPS_EMOJI[c1]} {c1.capitalize()}**", inline=True)
+    embed.add_field(name="⚔️",        value="VS",                                     inline=True)
+    embed.add_field(name=n2,          value=f"**{RPS_EMOJI[c2]} {c2.capitalize()}**", inline=True)
+    embed.add_field(name="🏆 Result", value=result,                                   inline=False)
 
     try:
         mid    = ch.get("msg_id")
@@ -8155,6 +8167,70 @@ async def currentevent_slash(interaction: discord.Interaction):
 
 
 # ================================================================
+# SETUP COMMAND — creates #lifebot intro channel
+# ================================================================
+@bot.tree.command(name="setup", description="[Admin] Create a #lifebot channel with a full introduction embed")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def setup_slash(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+
+    # Reuse existing channel if already there
+    existing = discord.utils.get(guild.text_channels, name="lifebot")
+    if existing:
+        ch = existing
+    else:
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(send_messages=False, read_messages=True)
+        }
+        ch = await guild.create_text_channel("lifebot", overwrites=overwrites, topic="All LifeBot commands and info")
+
+    embed = discord.Embed(
+        title="🤖 Welcome to LifeBot!",
+        description=(
+            "LifeBot is a full-featured economy & gaming bot.\n"
+            "Everything runs on **slash commands** — type `/` to get started!\n"
+        ),
+        color=discord.Color.dark_green()
+    )
+    embed.add_field(
+        name="💼 Economy",
+        value="`/daily` `/work` `/crime` `/bank` `/shop` `/leaderboard`",
+        inline=False
+    )
+    embed.add_field(
+        name="🎮 Games",
+        value="`/blackjack` `/slots` `/rps` `/mines` `/chicken` `/scratch` `/play`",
+        inline=False
+    )
+    embed.add_field(
+        name="🥷 PvP",
+        value="`/steal` `/duel` `/scan` `/revenge`",
+        inline=False
+    )
+    embed.add_field(
+        name="🏴 Gangs & Territory",
+        value="`/gang` `/territory` `/chest`",
+        inline=False
+    )
+    embed.add_field(
+        name="📊 Profile & Progression",
+        value="`/profile` `/prestige` `/achievements` `/challenges` `/train` `/career`",
+        inline=False
+    )
+    embed.add_field(
+        name="❓ Full Command List",
+        value="Use `/help` for detailed info on every command.",
+        inline=False
+    )
+    embed.set_footer(text=f"Starting balance: ${STARTING_MONEY:,}  •  Good luck!")
+
+    msg = await ch.send(embed=embed)
+    await msg.pin()
+    await interaction.followup.send(f"✅ Intro posted and pinned in {ch.mention}!", ephemeral=True)
+
+
+# ================================================================
 # BOUNTY COMMANDS
 # ================================================================
 bounty_group = app_commands.Group(name="bounty", description="Place and track bounties on players")
@@ -8776,6 +8852,7 @@ async def on_tree_error(interaction: discord.Interaction, error):
         await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
     except Exception:
         pass
+
 
 if not TOKEN:
     log.error("DISCORD_TOKEN not found in .env!")
