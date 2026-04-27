@@ -8836,7 +8836,7 @@ async def on_ready():
     lottery_draw_task.start()
 
 @bot.command(name="sync")
-@commands.is_owner()
+@commands.has_permissions(administrator=True)
 async def sync_cmd(ctx):
     synced = await bot.tree.sync(guild=ctx.guild)
     await ctx.send(f"✅ Synced {len(synced)} slash commands to this server instantly.", delete_after=10)
