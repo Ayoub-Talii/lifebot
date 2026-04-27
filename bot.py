@@ -8838,6 +8838,7 @@ async def on_ready():
 @bot.command(name="sync")
 @commands.has_permissions(administrator=True)
 async def sync_cmd(ctx):
+    bot.tree.copy_global_to(guild=ctx.guild)
     synced = await bot.tree.sync(guild=ctx.guild)
     await ctx.send(f"✅ Synced {len(synced)} slash commands to this server instantly.", delete_after=10)
 
