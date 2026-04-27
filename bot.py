@@ -604,6 +604,11 @@ PROPERTIES = {
 }
 MAX_PROPERTIES    = 5   # max slots per player
 PROPERTY_RAID_CD  = 14400  # 4h between raiding the same target
+PROP_MAX_LEVEL    = 5
+# income multiplier per level
+PROP_UPGRADE_MULT = {1: 1.0, 2: 1.5, 3: 2.25, 4: 3.5, 5: 5.0}
+# upgrade cost = base_buy_cost * factor  (key = current level)
+PROP_UPGRADE_COST = {1: 0.30, 2: 0.60, 3: 1.00, 4: 2.00}
 
 # ── Training ──────────────────────────────────────────────────────
 # ── Career Paths ─────────────────────────────────────────────────
@@ -5436,6 +5441,11 @@ class LotteryView(View):
 # ================================================================
 # PROPERTIES PANEL
 # ================================================================
+def _prop_income_range(prop: dict) -> tuple:
+    info = PROPERTIES[prop["type"]]
+    mult = PROP_UPGRADE_MULT.get(prop.get("level", 1), 1.0)
+    return int(info["income"][0] * mult), int(info["income"][1] * mult)
+
 def _prop_income_ready(prop: dict) -> bool:
     return time.time() - prop.get("last_income", 0) >= PROPERTIES[prop["type"]]["cd"]
 
@@ -5454,17 +5464,18 @@ def _prop_embed(p: dict) -> discord.Embed:
         embed.add_field(name="📭 No Properties", value="Buy your first property below!", inline=False)
     for i, prop in enumerate(props):
         info    = PROPERTIES[prop["type"]]
+        level   = prop.get("level", 1)
+        lo, hi  = _prop_income_range(prop)
         ready   = _prop_income_ready(prop)
         next_at = int(prop.get("last_income", 0) + info["cd"])
         status  = "✅ **Ready to collect!**" if ready else f"⏳ Next: <t:{next_at}:R>"
+        lv_tag  = f"Lv{level}" + (" ⭐MAX" if level >= PROP_MAX_LEVEL else "")
         embed.add_field(
-            name=f"{info['emoji']} {info['name']} #{i+1}",
-            value=(
-                f"Income: **${info['income'][0]:,}–${info['income'][1]:,}**\n{status}"
-            ),
+            name=f"{info['emoji']} {info['name']} #{i+1}  [{lv_tag}]",
+            value=f"Income: **${lo:,}–${hi:,}**/6h\n{status}",
             inline=True
         )
-    embed.set_footer(text="Upgrade by buying more properties  •  Rivals can raid your properties!")
+    embed.set_footer(text="Use 🔧 Upgrade to boost income  •  Rivals can raid your properties!")
     return embed
 
 
@@ -5482,7 +5493,7 @@ class PropertyBuyView(View):
         if p["money"] < info["cost"]:
             return await interaction.response.send_message(f"❌ Need **${info['cost']:,}** — you have **${p['money']:,}**.", ephemeral=True)
         p["money"] -= info["cost"]
-        p["properties"].append({"type": ptype, "bought_at": time.time(), "last_income": 0})
+        p["properties"].append({"type": ptype, "bought_at": time.time(), "last_income": 0, "level": 1})
         save_data()
         embed = discord.Embed(
             title=f"🏠 {info['emoji']} {info['name']} Purchased!",
@@ -5529,8 +5540,7 @@ class PropertyView(View):
         collected = 0
         for prop in props:
             if _prop_income_ready(prop):
-                info = PROPERTIES[prop["type"]]
-                amt  = random.randint(*info["income"])
+                amt  = random.randint(*_prop_income_range(prop))
                 total += amt
                 prop["last_income"] = now
                 collected += 1
@@ -5575,6 +5585,16 @@ class PropertyView(View):
             )
         await interaction.response.edit_message(embed=embed, view=PropertyBuyView(self.uid))
 
+    @discord.ui.button(label="🔧 Upgrade", style=discord.ButtonStyle.green, row=0)
+    async def upgrade_btn(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.uid:
+            return await interaction.response.send_message("❌ Not your panel!", ephemeral=True)
+        p = get_player(self.uid)
+        if not p.get("properties"):
+            return await interaction.response.send_message("❌ You have no properties to upgrade.", ephemeral=True)
+        embed, view = _prop_upgrade_embed_view(p, self.uid)
+        await interaction.response.edit_message(embed=embed, view=view)
+
     @discord.ui.button(label="◀️ Back", style=discord.ButtonStyle.gray, row=0)
     async def back_btn(self, interaction: discord.Interaction, button: Button):
         if str(interaction.user.id) != self.uid:
@@ -5591,6 +5611,92 @@ class PropertyView(View):
         embed.add_field(name="🛒 Shop",    value="Buy items & upgrades", inline=False)
         embed.add_field(name="🏢 Business", value=biz_val or "Buy properties for passive income every 6h", inline=False)
         await interaction.response.edit_message(embed=embed, view=EconomyMenuView(self.uid))
+
+
+def _prop_upgrade_embed_view(p: dict, uid: str):
+    props = p.get("properties", [])
+    embed = discord.Embed(
+        title="🔧 Upgrade Properties",
+        description=f"Wallet: **${p['money']:,}**\nUpgrade your properties to boost income. Max level: **Lv{PROP_MAX_LEVEL}**.",
+        color=discord.Color.orange()
+    )
+    for i, prop in enumerate(props):
+        info    = PROPERTIES[prop["type"]]
+        level   = prop.get("level", 1)
+        lo, hi  = _prop_income_range(prop)
+        if level < PROP_MAX_LEVEL:
+            cost    = int(info["cost"] * PROP_UPGRADE_COST[level])
+            nlo     = int(info["income"][0] * PROP_UPGRADE_MULT[level + 1])
+            nhi     = int(info["income"][1] * PROP_UPGRADE_MULT[level + 1])
+            affordable = "✅" if p["money"] >= cost else "❌"
+            upg_txt = f"→ Lv{level+1}: **${nlo:,}–${nhi:,}**/6h  |  Cost: **${cost:,}** {affordable}"
+        else:
+            upg_txt = "⭐ **MAX LEVEL**"
+        embed.add_field(
+            name=f"{info['emoji']} {info['name']} #{i+1}  [Lv{level}]",
+            value=f"Current: **${lo:,}–${hi:,}**/6h\n{upg_txt}",
+            inline=False
+        )
+    return embed, PropertyUpgradeView(uid)
+
+
+class PropertyUpgradeView(View):
+    def __init__(self, uid: str):
+        super().__init__(timeout=90)
+        self.uid = uid
+        p = get_player(uid)
+        for i, prop in enumerate(p.get("properties", [])):
+            level = prop.get("level", 1)
+            info  = PROPERTIES[prop["type"]]
+            if level < PROP_MAX_LEVEL:
+                cost  = int(info["cost"] * PROP_UPGRADE_COST[level])
+                label = f"⬆️ #{i+1} {info['name']} (${cost:,})"
+                btn   = Button(label=label, style=discord.ButtonStyle.green, row=i // 3)
+                btn.callback = self._make_upgrade_cb(i)
+                self.add_item(btn)
+        back = Button(label="🔙 Back", style=discord.ButtonStyle.gray, row=4)
+        back.callback = self._back
+        self.add_item(back)
+
+    def _make_upgrade_cb(self, idx: int):
+        async def callback(interaction: discord.Interaction):
+            if str(interaction.user.id) != self.uid:
+                return await interaction.response.send_message("❌ Not your panel!", ephemeral=True)
+            p     = get_player(self.uid)
+            props = p.get("properties", [])
+            if idx >= len(props):
+                return await interaction.response.send_message("❌ Property not found.", ephemeral=True)
+            prop  = props[idx]
+            level = prop.get("level", 1)
+            info  = PROPERTIES[prop["type"]]
+            if level >= PROP_MAX_LEVEL:
+                return await interaction.response.send_message("⭐ Already at max level!", ephemeral=True)
+            cost = int(info["cost"] * PROP_UPGRADE_COST[level])
+            if p["money"] < cost:
+                return await interaction.response.send_message(
+                    f"❌ Need **${cost:,}** — you have **${p['money']:,}**.", ephemeral=True)
+            p["money"]      -= cost
+            prop["level"]    = level + 1
+            lo, hi           = _prop_income_range(prop)
+            save_data()
+            embed = discord.Embed(
+                title=f"🔧 {info['emoji']} {info['name']} Upgraded!",
+                description=f"**#{idx+1}** is now **Lv{level+1}**!",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="💸 Cost",       value=f"**-${cost:,}**",          inline=True)
+            embed.add_field(name="💰 New Income", value=f"**${lo:,}–${hi:,}**/6h", inline=True)
+            embed.add_field(name="💵 Wallet",     value=f"**${p['money']:,}**",      inline=True)
+            if level + 1 >= PROP_MAX_LEVEL:
+                embed.set_footer(text="⭐ MAX LEVEL reached!")
+            await interaction.response.edit_message(embed=embed, view=PropertyView(self.uid))
+        return callback
+
+    async def _back(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.uid:
+            return await interaction.response.send_message("❌ Not your panel!", ephemeral=True)
+        p = get_player(self.uid)
+        await interaction.response.edit_message(embed=_prop_embed(p), view=PropertyView(self.uid))
 
 
 class PropertyRaidTargetView(View):
@@ -5629,7 +5735,7 @@ class PropertyRaidTargetView(View):
             else:
                 target_prop = random.choice(ready_props)
             info    = PROPERTIES[target_prop["type"]]
-            haul    = random.randint(*info["income"])
+            haul    = random.randint(*_prop_income_range(target_prop))
             p["money"] += haul
             target_prop["last_income"] = time.time()  # reset their collection timer
             p["stats"]["properties_raided"] = p["stats"].get("properties_raided", 0) + 1
