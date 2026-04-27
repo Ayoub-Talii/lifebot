@@ -8823,6 +8823,7 @@ async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await bot.change_presence(activity=discord.Game(name="🎰 /play to start"))
     await bot.tree.sync()
+    log.info("Global slash commands synced.")
     refresh_menus.start()
     heat_decay_task.start()
     economy_daily_tick.start()
@@ -8834,11 +8835,18 @@ async def on_ready():
     server_event_task.start()
     lottery_draw_task.start()
 
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_cmd(ctx):
+    synced = await bot.tree.sync(guild=ctx.guild)
+    await ctx.send(f"✅ Synced {len(synced)} slash commands to this server instantly.", delete_after=10)
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
     uid = str(message.author.id)
     if uid in players: players[uid]["name"] = message.author.display_name
+    await bot.process_commands(message)
 
 @bot.tree.error
 async def on_tree_error(interaction: discord.Interaction, error):
